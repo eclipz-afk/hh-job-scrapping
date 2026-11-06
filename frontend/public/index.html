@@ -1,0 +1,145 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="no-referrer" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' http://localhost:5000 http://127.0.0.1:5000 http://[::1]:5000 https://jobs-backend.onrender.com; object-src 'none'; base-uri 'none'; form-action 'self'" />
+    <title>Data Science & IT Jobs Observatory</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./css/styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3-cloud@1.2.7/build/d3.layout.cloud.js" integrity="sha384-bI0nd/RAwAtZt0P/RMrpDzJ5neK0yrKvlsnqYvSISaz7sEUWIcNuiTrvs2F9b+mM" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div class="bg-layer"></div>
+    <main class="layout">
+      <section class="hero">
+        <p class="eyebrow">Job Market Intelligence</p>
+        <h1>Data Science & IT Jobs Observatory</h1>
+        <p class="subtitle">
+          Scraped, cleaned, and aggregated job postings in PostgreSQL with a Flask API and D3 analytics dashboard.
+        </p>
+      </section>
+
+      <section class="controls card">
+        <div class="control-row">
+          <label for="roleFilter">Role Family</label>
+          <select id="roleFilter">
+            <option value="all">All</option>
+            <option value="data_science">Data Science</option>
+            <option value="it">IT</option>
+          </select>
+        </div>
+        <div class="control-row">
+          <label for="sourceFilter">Source</label>
+          <select id="sourceFilter">
+            <option value="all">All</option>
+            <option value="hh">HH.ru</option>
+            <option value="arbeitnow">Arbeitnow</option>
+          </select>
+        </div>
+        <div class="control-row buttons">
+          <button id="refreshBtn" class="btn">Refresh Dashboard</button>
+          <button id="runEtlBtn" class="btn accent">Run ETL (5000)</button>
+        </div>
+      </section>
+
+      <section class="kpi-grid">
+        <article class="kpi card">
+          <span>Total Jobs</span>
+          <strong id="kpiTotalJobs">-</strong>
+        </article>
+        <article class="kpi card">
+          <span>Companies</span>
+          <strong id="kpiCompanies">-</strong>
+        </article>
+        <article class="kpi card">
+          <span>Avg Salary (USD)</span>
+          <strong id="kpiAvgSalary">-</strong>
+        </article>
+        <article class="kpi card">
+          <span>Median Salary (USD)</span>
+          <strong id="kpiMedianSalary">-</strong>
+        </article>
+        <article class="kpi card">
+          <span>Unique Job Titles</span>
+          <strong id="kpiUniqueTitles">-</strong>
+        </article>
+        <article class="kpi card">
+          <span>Top Employer</span>
+          <strong id="kpiTopEmployer">-</strong>
+          <small id="kpiTopEmployerCount">-</small>
+        </article>
+      </section>
+
+      <section class="chart-grid">
+        <article class="card chart-card">
+          <h2>Top Skills</h2>
+          <svg id="skillsChart"></svg>
+        </article>
+
+        <article class="card chart-card">
+          <h2>Salary Bands</h2>
+          <svg id="salaryChart"></svg>
+        </article>
+
+        <article class="card chart-card">
+          <h2>City Word Cloud</h2>
+          <svg id="locationChart"></svg>
+        </article>
+
+        <article class="card chart-card">
+          <h2>Postings Timeline</h2>
+          <svg id="timelineChart"></svg>
+        </article>
+
+        <article class="card chart-card">
+          <h2>Top Employers</h2>
+          <svg id="employerChart"></svg>
+        </article>
+      </section>
+
+      <section class="card table-card">
+        <div class="table-header">
+          <h2>Latest Jobs</h2>
+          <p id="tableMeta"></p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Company</th>
+                <th>Role</th>
+                <th>Location</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody id="jobsTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <p id="statusLine" class="status"></p>
+    </main>
+
+    <dialog id="etlAuthDialog">
+      <form method="dialog">
+        <label for="etlToken">ETL access token</label>
+        <input id="etlToken" type="password" required autocomplete="off" autofocus />
+        <p>The token is used for this request only.</p>
+        <button value="cancel" formnovalidate>Cancel</button>
+        <button value="run">Run ETL</button>
+      </form>
+    </dialog>
+
+    <script src="./js/config.js"></script>
+    <script src="./js/dashboard.js"></script>
+  </body>
+</html>
