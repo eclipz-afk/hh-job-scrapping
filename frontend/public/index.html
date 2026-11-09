@@ -1,145 +1,102 @@
-﻿<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="referrer" content="no-referrer" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' http://localhost:5000 http://127.0.0.1:5000 http://[::1]:5000 https://jobs-backend.onrender.com; object-src 'none'; base-uri 'none'; form-action 'self'" />
-    <title>Data Science & IT Jobs Observatory</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="./css/styles.css" />
-    <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/d3-cloud@1.2.7/build/d3.layout.cloud.js" integrity="sha384-bI0nd/RAwAtZt0P/RMrpDzJ5neK0yrKvlsnqYvSISaz7sEUWIcNuiTrvs2F9b+mM" crossorigin="anonymous"></script>
-  </head>
-  <body>
-    <div class="bg-layer"></div>
-    <main class="layout">
-      <section class="hero">
-        <p class="eyebrow">Job Market Intelligence</p>
-        <h1>Data Science & IT Jobs Observatory</h1>
-        <p class="subtitle">
-          Scraped, cleaned, and aggregated job postings in PostgreSQL with a Flask API and D3 analytics dashboard.
-        </p>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Explore Data Science and IT vacancies, in-demand skills, employers and hiring locations." />
+  <meta name="referrer" content="no-referrer" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'" />
+  <title>Jobscope | Data Science &amp; IT job market</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="./css/fonts.css" />
+  <link rel="stylesheet" href="./css/styles.css" />
+  <script src="./js/vendor/d3.v7.9.0.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
+  <script src="./js/vendor/d3-cloud.v1.2.7.js" integrity="sha384-bI0nd/RAwAtZt0P/RMrpDzJ5neK0yrKvlsnqYvSISaz7sEUWIcNuiTrvs2F9b+mM" crossorigin="anonymous"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to dashboard</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="#main" aria-label="Jobscope home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Jobscope</a>
+      <h1>Data Science &amp; IT job market</h1>
+      <span id="collectionDate" class="collection-date">Loading dataset</span>
+    </div>
+  </header>
+  <main id="main" tabindex="-1">
+    <section class="filter-bar" aria-label="Global market filters and dataset actions">
+      <div class="segmented" role="group" aria-label="Role family">
+        <button type="button" class="segment selected" data-role="all" aria-pressed="true">All tech roles</button>
+        <button type="button" class="segment" data-role="data_science" aria-pressed="false"><span class="dot dot-data" aria-hidden="true"></span>Data Science</button>
+        <button type="button" class="segment" data-role="it" aria-pressed="false"><span class="dot dot-it" aria-hidden="true"></span>IT &amp; engineering</button>
+      </div>
+      <div class="source-control">
+        <label for="sourceFilter">Source</label>
+        <select id="sourceFilter"><option value="all">All sources</option><option value="hh">HeadHunter</option><option value="arbeitnow">Arbeitnow</option></select>
+      </div>
+      <button type="button" id="resetFilters" class="text-button">Reset filters</button>
+      <div class="dataset-actions">
+        <button type="button" class="button button-outline" id="refreshBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7a9 9 0 1 0 1 8M20 3v5h-5"/></svg>Refresh</button>
+        <button type="button" class="button button-primary" id="runEtlBtn">Update dataset</button>
+      </div>
+    </section>
+    <div class="status-row"><p id="statusLine" class="status-line" role="status" aria-live="polite">Connecting to the job market dataset...</p><button type="button" id="retryBtn" class="button button-quiet" hidden>Retry</button></div>
+    <nav class="view-tabs" aria-label="Dashboard views">
+      <button type="button" class="view-tab selected" data-view="overview" aria-controls="overviewView" aria-pressed="true">Overview</button>
+      <button type="button" class="view-tab" data-view="vacancies" aria-controls="vacanciesSection" aria-pressed="false">Vacancies</button>
+    </nav>
+    <div id="dashboardContent" aria-busy="true">
+      <section class="stats-strip" aria-label="Dataset overview">
+        <div class="stat"><span>Collected vacancies</span><strong id="kpiTotalJobs">-</strong></div>
+        <div class="stat"><span>Hiring companies</span><strong id="kpiCompanies">-</strong></div>
+        <div class="stat"><span>Unique job titles</span><strong id="kpiUniqueTitles">-</strong></div>
+        <div class="stat"><span>Hiring locations</span><strong id="kpiLocations">-</strong></div>
       </section>
-
-      <section class="controls card">
-        <div class="control-row">
-          <label for="roleFilter">Role Family</label>
-          <select id="roleFilter">
-            <option value="all">All</option>
-            <option value="data_science">Data Science</option>
-            <option value="it">IT</option>
-          </select>
+      <section id="overviewView" aria-label="Market overview">
+        <div class="market-grid">
+          <article class="panel demand-panel"><div class="panel-heading"><h2>Demand by role</h2><span class="subtle-badge">Vacancies</span></div><div class="chart-legend"><span><i class="dot dot-it"></i>IT & engineering</span><span><i class="dot dot-data"></i>Data Science</span></div><div id="rolesChart" class="role-chart" role="group" aria-label="Vacancies by job category"></div><p class="panel-footnote">Categories group job titles, not vacancy availability.</p></article>
+          <article class="panel skills-panel" id="skillsSection"><div class="panel-heading"><h2>In-demand skills</h2><span class="subtle-badge">Top 10 mentions</span></div><div id="skillsChart" class="rank-chart" aria-label="Most mentioned technical skills"></div><p class="panel-footnote">Select a skill to browse matching vacancies.</p></article>
+          <article class="panel employers-panel" id="employersSection"><div class="panel-heading"><h2>Top employers</h2><span class="subtle-badge">Vacancies</span></div><div id="employerChart" class="employer-list" role="group" aria-label="Employers ranked by vacancy count"></div><p class="panel-footnote">Counts cover this sample, not every open role.</p></article>
+          <article class="panel cities-panel"><div class="panel-heading"><h2>Hiring locations</h2><span id="citiesCount" class="subtle-badge">Top locations</span></div><svg id="locationChart" class="city-cloud" role="img" aria-label="Hiring locations sized by vacancy count"></svg><p class="panel-footnote">Larger names mean more vacancies. Hover or focus for details.</p></article>
+          <article class="panel salary-panel"><div class="panel-heading"><h2>Salary visibility</h2><span class="subtle-badge">Reported pay</span></div><div class="salary-coverage"><strong id="salaryCoverage">-</strong><span>include a salary estimate</span></div><div class="coverage-track"><span id="coverageBar"></span></div><p id="salarySample" class="salary-sample">Loading salary coverage...</p><div class="salary-stats"><div><span>Median salary</span><strong id="kpiMedianSalary">-</strong></div><div><span>Average salary</span><strong id="kpiAvgSalary">-</strong></div></div><div id="salaryChart" class="salary-bands" aria-label="Distribution of advertised salaries"></div><p class="panel-footnote" id="salaryRateNote">CBR rates: 2026-11-07. Pay periods may differ; not a market-wide estimate.</p></article>
         </div>
-        <div class="control-row">
-          <label for="sourceFilter">Source</label>
-          <select id="sourceFilter">
-            <option value="all">All</option>
-            <option value="hh">HH.ru</option>
-            <option value="arbeitnow">Arbeitnow</option>
-          </select>
-        </div>
-        <div class="control-row buttons">
-          <button id="refreshBtn" class="btn">Refresh Dashboard</button>
-          <button id="runEtlBtn" class="btn accent">Run ETL (5000)</button>
-        </div>
+        <div class="overview-footer"><span>Explore the vacancies behind these counts.</span><button type="button" class="text-button" data-view="vacancies" aria-controls="vacanciesSection">Browse vacancies</button></div>
       </section>
-
-      <section class="kpi-grid">
-        <article class="kpi card">
-          <span>Total Jobs</span>
-          <strong id="kpiTotalJobs">-</strong>
-        </article>
-        <article class="kpi card">
-          <span>Companies</span>
-          <strong id="kpiCompanies">-</strong>
-        </article>
-        <article class="kpi card">
-          <span>Avg Salary (USD)</span>
-          <strong id="kpiAvgSalary">-</strong>
-        </article>
-        <article class="kpi card">
-          <span>Median Salary (USD)</span>
-          <strong id="kpiMedianSalary">-</strong>
-        </article>
-        <article class="kpi card">
-          <span>Unique Job Titles</span>
-          <strong id="kpiUniqueTitles">-</strong>
-        </article>
-        <article class="kpi card">
-          <span>Top Employer</span>
-          <strong id="kpiTopEmployer">-</strong>
-          <small id="kpiTopEmployerCount">-</small>
-        </article>
-      </section>
-
-      <section class="chart-grid">
-        <article class="card chart-card">
-          <h2>Top Skills</h2>
-          <svg id="skillsChart"></svg>
-        </article>
-
-        <article class="card chart-card">
-          <h2>Salary Bands</h2>
-          <svg id="salaryChart"></svg>
-        </article>
-
-        <article class="card chart-card">
-          <h2>City Word Cloud</h2>
-          <svg id="locationChart"></svg>
-        </article>
-
-        <article class="card chart-card">
-          <h2>Postings Timeline</h2>
-          <svg id="timelineChart"></svg>
-        </article>
-
-        <article class="card chart-card">
-          <h2>Top Employers</h2>
-          <svg id="employerChart"></svg>
-        </article>
-      </section>
-
-      <section class="card table-card">
-        <div class="table-header">
-          <h2>Latest Jobs</h2>
-          <p id="tableMeta"></p>
+      <section class="panel vacancies-panel" id="vacanciesSection" aria-labelledby="vacanciesHeading" hidden>
+        <div class="panel-heading vacancies-heading">
+          <h2 id="vacanciesHeading">Vacancies</h2>
+          <div class="active-filters" role="group" aria-label="Active vacancy filters">
+            <button type="button" id="clearSkill" class="filter-chip" aria-label="Clear selected skill" hidden>Clear skill</button>
+            <button type="button" id="clearCompany" class="filter-chip" aria-label="Clear selected company" hidden>Clear company</button>
+            <button type="button" id="clearLocation" class="filter-chip" aria-label="Clear selected location" hidden>Clear location</button>
+            <button type="button" id="clearCategory" class="filter-chip" aria-label="Clear selected role category" hidden>Clear role</button>
+          </div>
+          <label class="search-box" for="jobSearch">
+            <span class="sr-only">Search job titles or companies</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
+            <input id="jobSearch" type="search" placeholder="Search job titles or companies" maxlength="200" />
+          </label>
         </div>
-        <div class="table-wrap">
+        <div class="table-scroll" role="region" aria-label="Vacancy results" tabindex="0">
           <table>
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Company</th>
-                <th>Role</th>
-                <th>Location</th>
-                <th>Source</th>
-              </tr>
-            </thead>
+            <caption class="sr-only">Vacancies matching the selected market and filters</caption>
+            <thead><tr><th scope="col">Role &amp; company</th><th scope="col">Location</th><th scope="col">Field</th><th scope="col">Advertised salary</th><th scope="col">Source</th></tr></thead>
             <tbody id="jobsTableBody"></tbody>
           </table>
         </div>
+        <div class="table-footer">
+          <p id="tableMeta" role="status">Loading vacancies...</p>
+          <nav class="pagination" aria-label="Vacancy pages">
+            <button type="button" id="previousPage" class="button button-quiet" disabled>Previous</button>
+            <span id="pageLabel" aria-live="polite">Page 1</span>
+            <button type="button" id="nextPage" class="button button-quiet" disabled>Next</button>
+          </nav>
+        </div>
       </section>
-
-      <p id="statusLine" class="status"></p>
-    </main>
-
-    <dialog id="etlAuthDialog">
-      <form method="dialog">
-        <label for="etlToken">ETL access token</label>
-        <input id="etlToken" type="password" required autocomplete="off" autofocus />
-        <p>The token is used for this request only.</p>
-        <button value="cancel" formnovalidate>Cancel</button>
-        <button value="run">Run ETL</button>
-      </form>
-    </dialog>
-
-    <script src="./js/config.js"></script>
-    <script src="./js/dashboard.js"></script>
-  </body>
+    </div>
+  </main>
+  <dialog id="etlAuthDialog" class="dataset-dialog" aria-labelledby="etlDialogHeading"><form method="dialog"><div class="dialog-heading"><h2 id="etlDialogHeading">Update the dataset</h2><button type="submit" value="cancel" formnovalidate class="close-button" aria-label="Close dialog">&times;</button></div><p>Collect up to 5,000 vacancies. Existing records are updated rather than duplicated.</p><label for="etlToken">Dataset access token</label><input id="etlToken" aria-describedby="etlTokenHelp" type="password" required autocomplete="off" placeholder="Enter your private access token" /><small id="etlTokenHelp">Used for this request only. Never saved in your browser.</small><div class="dialog-actions"><button type="submit" value="cancel" formnovalidate class="button button-outline">Cancel</button><button type="submit" value="run" class="button button-primary">Update dataset</button></div></form></dialog>
+  <div id="chartTooltip" class="chart-tooltip" role="tooltip" hidden></div>
+  <script src="./js/config.js"></script>
+  <script src="./js/dashboard.js"></script>
+</body>
 </html>

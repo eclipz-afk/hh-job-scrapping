@@ -1,5 +1,4 @@
-﻿from __future__ import annotations
-
+import logging
 import re
 from typing import Any
 
@@ -8,8 +7,8 @@ import requests
 from app.etl.sources.base import parse_datetime
 from app.etl.types import RawJob
 
-
 _TAG_RE = re.compile(r"<[^>]+>")
+logger = logging.getLogger(__name__)
 
 
 class ArbeitnowSource:
@@ -21,21 +20,27 @@ class ArbeitnowSource:
 
     def fetch_jobs(self, target_rows: int, max_pages: int) -> list[RawJob]:
         headers = {"User-Agent": "job-analytics-dashboard/1.0"}
-        results: list[RawJob] = []
+        raw_jobs = []
 
         with requests.Session() as client:
             client.headers.update(headers)
             client.trust_env = False
             for page in range(1, max_pages + 1):
-                if len(results) >= target_rows:
+                if len(raw_jobs) >= target_rows:
                     break
 
                 params = {"page": page}
                 try:
-                    response = client.get(self.base_url, params=params, timeout=self.timeout_seconds, allow_redirects=False)
+                    response = client.get(
+                        self.base_url,
+                        params=params,
+                        timeout=self.timeout_seconds,
+                        allow_redirects=False,
+                    )
                     response.raise_for_status()
                     payload = response.json()
-                except requests.RequestException:
+                except requests.RequestException as error:
+                    logger.warning("Arbeitnow page %s failed (%s)", page, type(error).__name__)
                     break
 
                 items = payload.get("data") or []
@@ -43,11 +48,11 @@ class ArbeitnowSource:
                     break
 
                 for item in items:
-                    parsed = self._parse_item(item)
-                    if parsed is not None:
-                        results.append(parsed)
+                    raw_job = self._parse_item(item)
+                    if raw_job is not None:
+                        raw_jobs.append(raw_job)
 
-        return results
+        return raw_jobs
 
     def _parse_item(self, item: dict[str, Any]) -> RawJob | None:
         external_id = item.get("slug") or item.get("title")

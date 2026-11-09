@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 import json
+import logging
 import re
 import time
 from typing import Any
@@ -10,6 +9,8 @@ from bs4 import BeautifulSoup
 
 from app.etl.sources.base import parse_datetime
 from app.etl.types import RawJob
+
+logger = logging.getLogger(__name__)
 
 
 class HHSource:
@@ -42,7 +43,17 @@ class HHSource:
     }
 
     _COUNTRY_HINTS: dict[str, tuple[str, ...]] = {
-        "Belarus": ("минск", "брест", "гродно", "гомель", "витебск", "могилев", "belarus"),
+        "Belarus": (
+            "минск",
+            "minsk",
+            "брест",
+            "гродно",
+            "gomel",
+            "гомель",
+            "витебск",
+            "могилев",
+            "belarus",
+        ),
         "Kazakhstan": ("алматы", "астана", "шымкент", "караганда", "актау", "атырау", "kazakhstan"),
         "Armenia": ("ереван", "armenia"),
         "Georgia": ("тбилиси", "батуми", "georgia"),
@@ -121,6 +132,7 @@ class HHSource:
         results.extend(api_rows)
 
         if len(results) < target_rows:
+            logger.info("HH API returned %s vacancies; continuing with HTML search", len(api_rows))
             html_rows = self._fetch_via_html(
                 target_rows=target_rows - len(results),
                 max_pages=max_pages,
@@ -151,17 +163,29 @@ class HHSource:
                         "only_with_salary": "false",
                     }
                     try:
-                        response = client.get(self.base_url, params=params, timeout=self.timeout_seconds, allow_redirects=False)
-                    except requests.RequestException:
+                        response = client.get(
+                            self.base_url,
+                            params=params,
+                            timeout=self.timeout_seconds,
+                            allow_redirects=False,
+                        )
+                    except requests.RequestException as error:
+                        logger.debug("HH API page %s failed (%s)", page, type(error).__name__)
                         break
 
                     if response.status_code in {400, 401, 403}:
+                        logger.debug(
+                            "HH API rejected page %s (HTTP %s)", page, response.status_code
+                        )
                         break
 
                     try:
                         response.raise_for_status()
                         payload = response.json()
-                    except (requests.RequestException, ValueError):
+                    except (requests.RequestException, ValueError) as error:
+                        logger.debug(
+                            "HH API response on page %s failed (%s)", page, type(error).__name__
+                        )
                         break
 
                     items = payload.get("items") or []
@@ -197,7 +221,11 @@ class HHSource:
                 and pages_used < page_budget
             ):
                 for query in self._QUERIES:
-                    if query in exhausted_queries or pages_used >= page_budget or len(results) >= target_rows:
+                    if (
+                        query in exhausted_queries
+                        or pages_used >= page_budget
+                        or len(results) >= target_rows
+                    ):
                         continue
 
                     page = page_per_query[query]
@@ -210,9 +238,15 @@ class HHSource:
                         "search_field": "name",
                     }
                     try:
-                        response = client.get(self.search_url, params=params, timeout=self.timeout_seconds, allow_redirects=False)
+                        response = client.get(
+                            self.search_url,
+                            params=params,
+                            timeout=self.timeout_seconds,
+                            allow_redirects=False,
+                        )
                         response.raise_for_status()
-                    except requests.RequestException:
+                    except requests.RequestException as error:
+                        logger.debug("HH search page %s failed (%s)", page, type(error).__name__)
                         exhausted_queries.add(query)
                         continue
 
@@ -226,8 +260,10 @@ class HHSource:
                             continue
                         seen_ids.add(row.external_id)
 
-                        if detail_requests < self.detail_enrich_budget and salary_enriched < self.salary_enrich_target and (
-                            row.salary_from is None or row.salary_to is None
+                        if (
+                            detail_requests < self.detail_enrich_budget
+                            and salary_enriched < self.salary_enrich_target
+                            and (row.salary_from is None or row.salary_to is None)
                         ):
                             detail_requests += 1
                             enriched = self._enrich_from_vacancy_page(client, row)
@@ -245,6 +281,8 @@ class HHSource:
         return results
 
     def _parse_api_item(self, item: dict[str, Any]) -> RawJob | None:
+        if item.get("archived") is True:
+            return None
         external_id = item.get("id")
         title = item.get("name")
         employer = (item.get("employer") or {}).get("name")
@@ -258,14 +296,20 @@ class HHSource:
         salary_from = self._to_float(salary.get("from"))
         salary_to = self._to_float(salary.get("to"))
         salary_currency = salary.get("currency")
+        if salary_currency == "BYR":
+            # HH's currency dictionary uses BYR for current Belarusian rubles.
+            salary_currency = "BYN"
 
         address = item.get("address") or {}
         city = address.get("city")
 
         snippet = item.get("snippet") or {}
-        description = " ".join(
-            part for part in [snippet.get("requirement"), snippet.get("responsibility")] if part
-        ).strip() or None
+        description = (
+            " ".join(
+                part for part in [snippet.get("requirement"), snippet.get("responsibility")] if part
+            ).strip()
+            or None
+        )
 
         return RawJob(
             source=self.name,
@@ -306,10 +350,9 @@ class HHSource:
             if not title:
                 continue
 
-            company_node = (
-                card.select_one('[data-qa="vacancy-serp__vacancy-employer-text"]')
-                or card.select_one('[data-qa="vacancy-serp__vacancy-employer"]')
-            )
+            company_node = card.select_one(
+                '[data-qa="vacancy-serp__vacancy-employer-text"]'
+            ) or card.select_one('[data-qa="vacancy-serp__vacancy-employer"]')
             company = company_node.get_text(" ", strip=True) if company_node else "unknown"
 
             location_node = card.select_one('[data-qa="vacancy-serp__vacancy-address"]')
@@ -350,7 +393,8 @@ class HHSource:
         try:
             response = client.get(url, timeout=self.timeout_seconds, allow_redirects=False)
             response.raise_for_status()
-        except requests.RequestException:
+        except requests.RequestException as error:
+            logger.debug("HH vacancy detail request failed (%s)", type(error).__name__)
             return None
 
         html = response.text
@@ -378,7 +422,9 @@ class HHSource:
 
             if isinstance(payload, dict):
                 location_payload = payload.get("jobLocation")
-                address = location_payload.get("address") if isinstance(location_payload, dict) else None
+                address = (
+                    location_payload.get("address") if isinstance(location_payload, dict) else None
+                )
                 if isinstance(address, dict):
                     country_code = address.get("addressCountry")
                     country = self._country_from_code(country_code) or country
@@ -403,7 +449,9 @@ class HHSource:
         )
 
     @staticmethod
-    def _salary_from_meta_description(description_meta: str) -> tuple[float | None, float | None, str | None] | None:
+    def _salary_from_meta_description(
+        description_meta: str,
+    ) -> tuple[float | None, float | None, str | None] | None:
         marker = "Зарплата:"
         idx = description_meta.find(marker)
         if idx == -1:

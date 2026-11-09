@@ -1,13 +1,13 @@
-﻿from __future__ import annotations
-
 from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import case, delete, desc, func, literal, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import Job, Skill, job_skills
+from app.etl.cleaning import CURRENCY_RATE_DATE, CURRENCY_RATE_SOURCE
+from app.etl.roles import role_category
 from app.etl.types import CleanJob
 
 
@@ -24,6 +24,13 @@ def _metric_conditions(role_family: str | None, source: str | None) -> list:
     if source:
         conditions.append(Job.source == source)
     return conditions
+
+
+def _salary_midpoint():
+    """Use the known salary bound when the other bound is absent."""
+    lower_salary = func.coalesce(Job.salary_usd_from, Job.salary_usd_to)
+    upper_salary = func.coalesce(Job.salary_usd_to, Job.salary_usd_from)
+    return (lower_salary + upper_salary) / 2
 
 
 def upsert_jobs(session: Session, jobs: Sequence[CleanJob]) -> tuple[int, int]:
@@ -106,7 +113,9 @@ def _upsert_jobs_batch(session: Session, jobs: Sequence[CleanJob]) -> tuple[int,
     session.execute(upsert_stmt)
 
     id_rows = session.execute(
-        select(Job.id, Job.source, Job.external_id).where(tuple_(Job.source, Job.external_id).in_(keys))
+        select(Job.id, Job.source, Job.external_id).where(
+            tuple_(Job.source, Job.external_id).in_(keys)
+        )
     ).all()
     id_map = {(row.source, row.external_id): row.id for row in id_rows}
 
@@ -115,12 +124,16 @@ def _upsert_jobs_batch(session: Session, jobs: Sequence[CleanJob]) -> tuple[int,
     return inserted_rows, updated_rows
 
 
-def _replace_job_skills(session: Session, jobs: Sequence[CleanJob], id_map: dict[tuple[str, str], int]) -> None:
+def _replace_job_skills(
+    session: Session, jobs: Sequence[CleanJob], id_map: dict[tuple[str, str], int]
+) -> None:
     skill_names = sorted({skill for job in jobs for skill in job.skills})
     if not skill_names:
         return
 
-    existing = session.execute(select(Skill.name).where(Skill.name.in_(skill_names))).scalars().all()
+    existing = (
+        session.execute(select(Skill.name).where(Skill.name.in_(skill_names))).scalars().all()
+    )
     existing_set = set(existing)
     missing = [name for name in skill_names if name not in existing_set]
 
@@ -128,16 +141,22 @@ def _replace_job_skills(session: Session, jobs: Sequence[CleanJob], id_map: dict
         stmt = insert(Skill).values([{"name": name} for name in missing])
         session.execute(stmt.on_conflict_do_nothing(index_elements=[Skill.name]))
 
-    skill_rows = session.execute(select(Skill.id, Skill.name).where(Skill.name.in_(skill_names))).all()
+    skill_rows = session.execute(
+        select(Skill.id, Skill.name).where(Skill.name.in_(skill_names))
+    ).all()
     skill_map = {row.name: row.id for row in skill_rows}
 
-    job_ids = [id_map[(job.source, job.external_id)] for job in jobs if (job.source, job.external_id) in id_map]
+    job_ids = []
+    for job in jobs:
+        job_id = id_map.get((job.source, job.external_id))
+        if job_id is not None:
+            job_ids.append(job_id)
     if not job_ids:
         return
 
     session.execute(delete(job_skills).where(job_skills.c.job_id.in_(job_ids)))
 
-    associations: list[dict[str, int]] = []
+    associations = []
     for job in jobs:
         job_id = id_map.get((job.source, job.external_id))
         if job_id is None:
@@ -151,7 +170,9 @@ def _replace_job_skills(session: Session, jobs: Sequence[CleanJob], id_map: dict
         if not associations_batch:
             continue
         stmt = insert(job_skills).values(associations_batch)
-        session.execute(stmt.on_conflict_do_nothing(index_elements=[job_skills.c.job_id, job_skills.c.skill_id]))
+        session.execute(
+            stmt.on_conflict_do_nothing(index_elements=[job_skills.c.job_id, job_skills.c.skill_id])
+        )
 
 
 def list_jobs(
@@ -161,17 +182,36 @@ def list_jobs(
     role_family: str | None = None,
     source: str | None = None,
     search: str | None = None,
+    skill: str | None = None,
+    company: str | None = None,
+    location: str | None = None,
+    country: str | None = None,
+    category: str | None = None,
 ) -> tuple[list[Job], int]:
-    conditions = []
-    if role_family:
-        conditions.append(Job.role_family == role_family)
-    if source:
-        conditions.append(Job.source == source)
+    conditions = _metric_conditions(role_family, source)
     if search:
         pattern = f"%{search.lower()}%"
-        conditions.append(func.lower(Job.title).like(pattern))
+        conditions.append(
+            func.lower(Job.title).like(pattern) | func.lower(Job.company).like(pattern)
+        )
+    if skill:
+        conditions.append(Job.skills.any(Skill.name == skill))
+    if company:
+        conditions.append(Job.company == company)
+    if location:
+        location_label = func.coalesce(func.nullif(Job.city, ""), Job.location)
+        conditions.append(location_label == location)
+    if country:
+        conditions.append(Job.country == country)
+    if category:
+        category_query = select(Job.title, Job.role_family).where(*conditions).distinct()
+        category_keys = []
+        for title, family in session.execute(category_query):
+            if role_category(title, family) == category:
+                category_keys.append((title, family))
+        conditions.append(tuple_(Job.title, Job.role_family).in_(category_keys))
 
-    stmt = select(Job)
+    stmt = select(Job).options(selectinload(Job.skills))
     count_stmt = select(func.count()).select_from(Job)
 
     for condition in conditions:
@@ -180,11 +220,15 @@ def list_jobs(
 
     total = session.execute(count_stmt).scalar_one()
 
-    jobs = session.execute(
-        stmt.order_by(desc(Job.published_at).nullslast(), desc(Job.id))
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    ).scalars().all()
+    jobs = (
+        session.execute(
+            stmt.order_by(desc(Job.published_at).nullslast(), desc(Job.id))
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        .scalars()
+        .all()
+    )
 
     return jobs, int(total)
 
@@ -194,45 +238,46 @@ def get_overview_metrics(
     role_family: str | None = None,
     source: str | None = None,
 ) -> dict[str, Any]:
-    salary_mid = (func.coalesce(Job.salary_usd_from, Job.salary_usd_to) + func.coalesce(Job.salary_usd_to, Job.salary_usd_from)) / 2
+    salary_mid = _salary_midpoint()
     conditions = _metric_conditions(role_family, source)
 
     totals_stmt = select(
-        func.count(Job.id),
-        func.count(func.distinct(Job.company)),
-        func.count(func.distinct(Job.title)),
-        func.count(func.distinct(Job.location)),
-        func.avg(salary_mid),
-        func.percentile_cont(literal(0.5)).within_group(salary_mid),
+        func.count(Job.id).label("total_jobs"),
+        func.count(func.distinct(Job.company)).label("total_companies"),
+        func.count(func.distinct(Job.title)).label("unique_titles"),
+        func.count(func.distinct(Job.location)).label("total_locations"),
+        func.avg(salary_mid).label("avg_salary_usd"),
+        func.percentile_cont(literal(0.5)).within_group(salary_mid).label("median_salary_usd"),
+        func.count(salary_mid).label("salary_jobs"),
+        func.max(Job.created_at).label("last_collected_at"),
     )
     for condition in conditions:
         totals_stmt = totals_stmt.where(condition)
 
     totals = session.execute(totals_stmt).one()
 
-    role_stmt = select(Job.role_family, func.count(Job.id).label("jobs_count")).group_by(Job.role_family)
-    for condition in conditions:
-        role_stmt = role_stmt.where(condition)
+    average_salary = None
+    if totals.avg_salary_usd is not None:
+        average_salary = round(float(totals.avg_salary_usd), 2)
+    median_salary = None
+    if totals.median_salary_usd is not None:
+        median_salary = round(float(totals.median_salary_usd), 2)
 
-    role_counts_rows = session.execute(role_stmt).all()
-    top_employer_stmt = select(Job.company, func.count(Job.id).label("jobs_count")).group_by(Job.company).order_by(desc("jobs_count")).limit(1)
-    for condition in conditions:
-        top_employer_stmt = top_employer_stmt.where(condition)
-
-    top_employer_row = session.execute(top_employer_stmt).first()
-
-    role_counts = {row.role_family: int(row.jobs_count) for row in role_counts_rows}
+    last_collected_at = None
+    if totals.last_collected_at:
+        last_collected_at = totals.last_collected_at.isoformat()
 
     return {
-        "total_jobs": int(totals[0] or 0),
-        "total_companies": int(totals[1] or 0),
-        "unique_titles": int(totals[2] or 0),
-        "total_locations": int(totals[3] or 0),
-        "avg_salary_usd": round(float(totals[4]), 2) if totals[4] is not None else None,
-        "median_salary_usd": round(float(totals[5]), 2) if totals[5] is not None else None,
-        "top_employer": top_employer_row.company if top_employer_row is not None else None,
-        "top_employer_jobs": int(top_employer_row.jobs_count) if top_employer_row is not None else 0,
-        "role_counts": role_counts,
+        "total_jobs": int(totals.total_jobs or 0),
+        "total_companies": int(totals.total_companies or 0),
+        "unique_titles": int(totals.unique_titles or 0),
+        "total_locations": int(totals.total_locations or 0),
+        "avg_salary_usd": average_salary,
+        "median_salary_usd": median_salary,
+        "salary_jobs": int(totals.salary_jobs or 0),
+        "salary_rate_date": CURRENCY_RATE_DATE,
+        "salary_rate_source": CURRENCY_RATE_SOURCE,
+        "last_collected_at": last_collected_at,
     }
 
 
@@ -248,7 +293,7 @@ def get_skill_metrics(
         .join(job_skills, job_skills.c.skill_id == Skill.id)
         .join(Job, Job.id == job_skills.c.job_id)
         .group_by(Skill.id)
-        .order_by(desc("jobs_count"))
+        .order_by(desc("jobs_count"), Skill.name)
         .limit(limit)
     )
     for condition in conditions:
@@ -264,7 +309,7 @@ def get_salary_band_metrics(
     role_family: str | None = None,
     source: str | None = None,
 ) -> list[dict[str, Any]]:
-    salary_mid = (func.coalesce(Job.salary_usd_from, Job.salary_usd_to) + func.coalesce(Job.salary_usd_to, Job.salary_usd_from)) / 2
+    salary_mid = _salary_midpoint()
     conditions = _metric_conditions(role_family, source)
     band = case(
         (salary_mid < 1000, "under_1k"),
@@ -336,21 +381,22 @@ def get_employer_metrics(
     return [{"company": row.company, "count": int(row.jobs_count)} for row in rows if row.company]
 
 
-def get_timeline_metrics(
-    session: Session,
-    role_family: str | None = None,
-    source: str | None = None,
+def get_role_metrics(
+    session: Session, role_family: str | None = None, source: str | None = None
 ) -> list[dict[str, Any]]:
-    conditions = _metric_conditions(role_family, source)
-    stmt = (
-        select(func.date_trunc("week", Job.published_at).label("bucket"), func.count(Job.id).label("jobs_count"))
-        .where(Job.published_at.is_not(None))
-        .group_by("bucket")
-        .order_by("bucket")
+    stmt = select(Job.title, Job.role_family, func.count(Job.id).label("jobs_count")).group_by(
+        Job.title, Job.role_family
     )
-    for condition in conditions:
+    for condition in _metric_conditions(role_family, source):
         stmt = stmt.where(condition)
+    category_counts = {}
+    for row in session.execute(stmt):
+        category = role_category(row.title, row.role_family)
+        category_key = (category, row.role_family)
+        category_counts[category_key] = category_counts.get(category_key, 0) + int(row.jobs_count)
 
-    rows = session.execute(stmt).all()
-
-    return [{"week": row.bucket.isoformat(), "count": int(row.jobs_count)} for row in rows if row.bucket is not None]
+    sorted_categories = sorted(category_counts.items(), key=lambda item: (-item[1], item[0]))
+    metrics = []
+    for (category, role_family), job_count in sorted_categories:
+        metrics.append({"category": category, "role_family": role_family, "count": job_count})
+    return metrics

@@ -1,1 +1,1 @@
-﻿"""ETL source adapters."""
+"""ETL source adapters."""

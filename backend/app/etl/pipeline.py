@@ -1,6 +1,7 @@
-﻿from __future__ import annotations
+import logging
 
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.db.base import session_scope
@@ -9,6 +10,8 @@ from app.etl.cleaning import clean_raw_job, deduplicate_jobs
 from app.etl.sources.arbeitnow import ArbeitnowSource
 from app.etl.sources.hh import HHSource
 from app.etl.types import CleanJob, EtlResult, RawJob
+
+logger = logging.getLogger(__name__)
 
 
 class EtlAlreadyRunning(RuntimeError):
@@ -29,17 +32,18 @@ class JobETLPipeline:
             raise ValueError("target_rows must be between 1 and 10000")
         # A transaction lock prevents concurrent ingestion across workers/containers.
         with session_scope() as session:
-            acquired = session.execute(text("SELECT pg_try_advisory_xact_lock(726194203)")).scalar_one()
-            if not acquired:
+            lock_query = text("SELECT pg_try_advisory_xact_lock(726194203)")
+            lock_acquired = session.execute(lock_query).scalar_one()
+            if not lock_acquired:
                 raise EtlAlreadyRunning()
             return self._run_locked(requested, session)
 
-    def _run_locked(self, requested: int, session) -> EtlResult:
+    def _run_locked(self, requested: int, session: Session) -> EtlResult:
         fetch_target = max(requested * 2, 2000)
 
         raw_jobs, source_rows = self._scrape(fetch_target)
         cleaned_jobs = self._clean(raw_jobs)
-        notes: list[str] = []
+        notes = []
 
         if len(cleaned_jobs) > requested:
             cleaned_jobs = cleaned_jobs[:requested]
@@ -50,6 +54,13 @@ class JobETLPipeline:
             )
 
         inserted_rows, updated_rows = upsert_jobs(session, cleaned_jobs)
+        logger.info(
+            "ETL processed %s raw rows: %s cleaned, %s inserted, %s updated",
+            len(raw_jobs),
+            len(cleaned_jobs),
+            inserted_rows,
+            updated_rows,
+        )
 
         return EtlResult(
             requested_target=requested,
@@ -64,24 +75,25 @@ class JobETLPipeline:
 
     def _scrape(self, target_rows: int) -> tuple[list[RawJob], dict[str, int]]:
         per_source_target = max(target_rows // max(len(self.sources), 1), 1000)
-        rows: list[RawJob] = []
-        source_rows: dict[str, int] = {}
+        raw_jobs = []
+        source_rows = {}
 
         for source in self.sources:
-            fetched = source.fetch_jobs(
+            source_jobs = source.fetch_jobs(
                 target_rows=per_source_target,
                 max_pages=self.settings.max_source_pages,
             )
-            rows.extend(fetched)
-            source_rows[source.name] = len(fetched)
+            raw_jobs.extend(source_jobs)
+            source_rows[source.name] = len(source_jobs)
+            logger.info("Source %s returned %s vacancies", source.name, len(source_jobs))
 
-        return rows, source_rows
+        return raw_jobs, source_rows
 
     def _clean(self, rows: list[RawJob]) -> list[CleanJob]:
-        cleaned: list[CleanJob] = []
-        for row in rows:
-            parsed = clean_raw_job(row)
-            if parsed is not None:
-                cleaned.append(parsed)
+        cleaned_jobs = []
+        for raw_job in rows:
+            cleaned_job = clean_raw_job(raw_job)
+            if cleaned_job is not None:
+                cleaned_jobs.append(cleaned_job)
 
-        return deduplicate_jobs(cleaned)
+        return deduplicate_jobs(cleaned_jobs)

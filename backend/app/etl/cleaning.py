@@ -1,57 +1,9 @@
-﻿from __future__ import annotations
-
 import hashlib
 import re
 from typing import Iterable
 
+from app.etl.roles import classify_role
 from app.etl.types import CleanJob, RawJob
-
-
-ROLE_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "data_science": (
-        "data scientist",
-        "data science",
-        "machine learning",
-        "ml engineer",
-        "ai engineer",
-        "nlp",
-        "computer vision",
-        "data engineer",
-        "bi analyst",
-        "sql analyst",
-        "data analyst",
-        "data analytics",
-        "дата",
-        "машинн",
-        "аналитик данных",
-        "ml",
-        "ai",
-    ),
-    "it": (
-        "software",
-        "backend",
-        "frontend",
-        "fullstack",
-        "devops",
-        "cloud",
-        "sre",
-        "qa",
-        "tester",
-        "mobile",
-        "android",
-        "ios",
-        "developer",
-        "programmer",
-        "system analyst",
-        "business analyst",
-        "разработчик",
-        "инженер",
-        "тестировщик",
-        "девопс",
-        "системный аналитик",
-        "бизнес аналитик",
-    ),
-}
 
 SKILL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("python", re.compile(r"\bpython\b", flags=re.IGNORECASE)),
@@ -89,16 +41,20 @@ SKILL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("linux", re.compile(r"\blinux\b", flags=re.IGNORECASE)),
 )
 
+CURRENCY_RATE_DATE = "2026-11-07"
+CURRENCY_RATE_SOURCE = "https://www.cbr.ru/scripts/XML_daily.asp?date_req=07/11/2026"
+RUB_PER_USD = 82.1386
+
+# USD per one currency unit, using the dated CBR snapshot and its quoted nominals.
 CURRENCY_TO_USD: dict[str, float] = {
     "USD": 1.0,
-    "EUR": 1.09,
-    "RUR": 0.011,
-    "RUB": 0.011,
-    "KZT": 0.0022,
-    "BYR": 0.31,
-    "BYN": 0.31,
-    "UAH": 0.025,
-    "GBP": 1.26,
+    "EUR": 92.1924 / RUB_PER_USD,
+    "RUR": 1 / RUB_PER_USD,
+    "RUB": 1 / RUB_PER_USD,
+    "KZT": (18.1775 / 100) / RUB_PER_USD,
+    "BYN": 27.4518 / RUB_PER_USD,
+    "UAH": (18.0750 / 10) / RUB_PER_USD,
+    "GBP": 110.69 / RUB_PER_USD,
 }
 
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -110,19 +66,6 @@ def normalize_text(text: str | None) -> str:
         return ""
     compact = _WHITESPACE_RE.sub(" ", text)
     return compact.strip()
-
-
-def classify_role(title: str, description: str) -> str:
-    haystack = f"{title} {description}".lower()
-    scores = {"data_science": 0, "it": 0}
-    for role, keywords in ROLE_KEYWORDS.items():
-        for keyword in keywords:
-            if keyword in haystack:
-                scores[role] += 1
-
-    if scores["data_science"] > 0 and scores["data_science"] >= scores["it"]:
-        return "data_science"
-    return "it"
 
 
 def extract_skills(title: str, description: str) -> list[str]:
@@ -163,7 +106,7 @@ def clean_raw_job(raw: RawJob) -> CleanJob | None:
     if not title or not company or not location:
         return None
 
-    role_family = classify_role(title, description)
+    role_family = classify_role(title)
     skills = extract_skills(title, description)
     salary_currency = raw.salary_currency.upper() if raw.salary_currency else None
 

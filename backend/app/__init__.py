@@ -1,5 +1,3 @@
-﻿from __future__ import annotations
-
 from flask import Flask, request
 from werkzeug.exceptions import HTTPException
 
@@ -13,10 +11,8 @@ def create_app() -> Flask:
 
     app = Flask(__name__)
     app.config.update(
-        FLASK_ENV=settings.flask_env,
         FLASK_HOST=settings.flask_host,
         FLASK_PORT=settings.flask_port,
-        API_PREFIX=settings.api_prefix,
         MAX_CONTENT_LENGTH=16 * 1024,
     )
 

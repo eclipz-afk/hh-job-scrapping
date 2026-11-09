@@ -1,16 +1,4 @@
-﻿from __future__ import annotations
-
 from datetime import datetime
-from typing import Protocol
-
-from app.etl.types import RawJob
-
-
-class SourceAdapter(Protocol):
-    name: str
-
-    def fetch_jobs(self, target_rows: int, max_pages: int) -> list[RawJob]:
-        """Fetch raw jobs from external source."""
 
 
 def parse_datetime(value: str | int | float | None) -> datetime | None:

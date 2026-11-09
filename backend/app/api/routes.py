@@ -1,24 +1,23 @@
-﻿from __future__ import annotations
-
 from dataclasses import asdict
 from secrets import compare_digest
 
 from flask import Blueprint, abort, current_app, request
 
 from app.db.base import session_scope
+from app.db.models import Job
 from app.db.repository import (
     get_employer_metrics,
     get_location_metrics,
     get_overview_metrics,
+    get_role_metrics,
     get_salary_band_metrics,
     get_skill_metrics,
-    get_timeline_metrics,
     list_jobs,
 )
 from app.etl.pipeline import EtlAlreadyRunning, JobETLPipeline
 
 
-def _serialize_job(job) -> dict:
+def _serialize_job(job: Job) -> dict:
     return {
         "id": job.id,
         "source": job.source,
@@ -42,22 +41,24 @@ def _serialize_job(job) -> dict:
     }
 
 
+def _integer_arg(name: str, default: int, maximum: int) -> int:
+    try:
+        value = int(request.args.get(name, default))
+    except (TypeError, ValueError):
+        abort(400)
+    if not 1 <= value <= maximum:
+        abort(400)
+    return value
+
+
+def _metric_filters() -> tuple[str | None, str | None]:
+    role_family = request.args.get("role_family")
+    source = request.args.get("source")
+    return role_family, source
+
+
 def create_api_blueprint() -> Blueprint:
     bp = Blueprint("api", __name__)
-
-    def integer_arg(name: str, default: int, maximum: int) -> int:
-        try:
-            value = int(request.args.get(name, default))
-        except (TypeError, ValueError):
-            abort(400)
-        if not 1 <= value <= maximum:
-            abort(400)
-        return value
-
-    def metric_filters() -> tuple[str | None, str | None]:
-        role_family = request.args.get("role_family")
-        source = request.args.get("source")
-        return role_family, source
 
     @bp.get("/health")
     def health() -> tuple[dict, int]:
@@ -65,11 +66,21 @@ def create_api_blueprint() -> Blueprint:
 
     @bp.get("/jobs")
     def jobs() -> tuple[dict, int]:
-        page = integer_arg("page", 1, 10000)
-        page_size = integer_arg("page_size", 30, 100)
+        page = _integer_arg("page", 1, 10000)
+        page_size = _integer_arg("page_size", 30, 100)
         role_family = request.args.get("role_family")
         source = request.args.get("source")
         search = request.args.get("search")
+        skill = request.args.get("skill")
+        company = request.args.get("company")
+        location = request.args.get("location")
+        country = request.args.get("country")
+        category = request.args.get("category")
+        for value, maximum in ((company, 256), (location, 256), (country, 128), (category, 96)):
+            if value and len(value) > maximum:
+                abort(400)
+        if skill and len(skill) > 64:
+            abort(400)
         if search and len(search) > 200:
             abort(400)
 
@@ -81,6 +92,11 @@ def create_api_blueprint() -> Blueprint:
                 role_family=role_family,
                 source=source,
                 search=search,
+                skill=skill,
+                company=company,
+                location=location,
+                country=country,
+                category=category,
             )
             payload = [_serialize_job(job) for job in rows]
 
@@ -93,47 +109,53 @@ def create_api_blueprint() -> Blueprint:
 
     @bp.get("/metrics/overview")
     def metrics_overview() -> tuple[dict, int]:
-        role_family, source = metric_filters()
+        role_family, source = _metric_filters()
         with session_scope() as session:
             payload = get_overview_metrics(session, role_family=role_family, source=source)
         return payload, 200
 
     @bp.get("/metrics/skills")
     def metrics_skills() -> tuple[list[dict], int]:
-        limit = integer_arg("limit", 20, 50)
-        role_family, source = metric_filters()
+        limit = _integer_arg("limit", 20, 50)
+        role_family, source = _metric_filters()
         with session_scope() as session:
-            payload = get_skill_metrics(session, limit=limit, role_family=role_family, source=source)
+            payload = get_skill_metrics(
+                session, limit=limit, role_family=role_family, source=source
+            )
+        return payload, 200
+
+    @bp.get("/metrics/roles")
+    def metrics_roles() -> tuple[list[dict], int]:
+        role_family, source = _metric_filters()
+        with session_scope() as session:
+            payload = get_role_metrics(session, role_family=role_family, source=source)
         return payload, 200
 
     @bp.get("/metrics/salary-bands")
     def metrics_salary_bands() -> tuple[list[dict], int]:
-        role_family, source = metric_filters()
+        role_family, source = _metric_filters()
         with session_scope() as session:
             payload = get_salary_band_metrics(session, role_family=role_family, source=source)
         return payload, 200
 
     @bp.get("/metrics/locations")
     def metrics_locations() -> tuple[list[dict], int]:
-        limit = integer_arg("limit", 15, 50)
-        role_family, source = metric_filters()
+        limit = _integer_arg("limit", 15, 50)
+        role_family, source = _metric_filters()
         with session_scope() as session:
-            payload = get_location_metrics(session, limit=limit, role_family=role_family, source=source)
+            payload = get_location_metrics(
+                session, limit=limit, role_family=role_family, source=source
+            )
         return payload, 200
 
     @bp.get("/metrics/employers")
     def metrics_employers() -> tuple[list[dict], int]:
-        limit = integer_arg("limit", 10, 30)
-        role_family, source = metric_filters()
+        limit = _integer_arg("limit", 10, 30)
+        role_family, source = _metric_filters()
         with session_scope() as session:
-            payload = get_employer_metrics(session, limit=limit, role_family=role_family, source=source)
-        return payload, 200
-
-    @bp.get("/metrics/timeline")
-    def metrics_timeline() -> tuple[list[dict], int]:
-        role_family, source = metric_filters()
-        with session_scope() as session:
-            payload = get_timeline_metrics(session, role_family=role_family, source=source)
+            payload = get_employer_metrics(
+                session, limit=limit, role_family=role_family, source=source
+            )
         return payload, 200
 
     @bp.post("/etl/run")

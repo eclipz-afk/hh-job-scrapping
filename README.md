@@ -1,189 +1,151 @@
-﻿# Job Market Analytics (Data Science + IT)
+# Jobscope: Data Science & IT Job Market
 
-Microservice-style project to scrape, clean, store, and visualize **5000+ job postings** in Data Science and IT.
+A compact English-language desktop dashboard for collecting, cleaning and
+exploring 5,000+ Data Science and IT vacancies.
 
-## Stack
+## Structure
 
-- `storage/`: PostgreSQL 16
-- `backend/`: Flask + SQLAlchemy + ETL scrapers
-- `frontend/`: D3.js dashboard
-- `infra/`: deployment configuration (`render.yaml`)
-- `scripts/`: local helper scripts
+- `backend/`: Flask API, SQLAlchemy models and vacancy collection pipelines.
+- `frontend/`: HTML, CSS, JavaScript, local D3 libraries and Nginx configuration.
+- `docker-compose.yml`: local PostgreSQL, backend and frontend services.
 
-## Why an extra directory?
+SQLAlchemy creates the application tables at backend startup; no separate SQL
+bootstrap or PostgreSQL extensions are required.
 
-You asked for `frontend/backend/storage` as the main structure. I also added:
+## Quick Start
 
-- `infra/` for deployment manifests
-- `scripts/` for local workflow commands
-
-These keep deployment and operations separate from app code.
-
-## Features
-
-- Multi-source scraping:
-  - `hh.ru` vacancies API (Russian market)
-  - `Arbeitnow` API (global/remote jobs)
-- Cleaning and normalization:
-  - role classification (`data_science` / `it`)
-  - deduplication by source/external ID
-  - skill extraction (Python, SQL, Docker, etc.)
-  - salary normalization with USD conversion when possible
-- PostgreSQL storage with idempotent upserts
-- REST API for jobs and analytics metrics
-- D3 dashboard with:
-  - KPIs
-  - top skills
-  - salary bands
-  - location bubbles
-  - timeline
-  - latest jobs table
-
-## Repo Layout
-
-```text
-.
-├── backend/
-│   ├── app/
-│   │   ├── api/
-│   │   ├── core/
-│   │   ├── db/
-│   │   └── etl/
-│   ├── tests/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── run.py
-├── frontend/
-│   ├── public/
-│   │   ├── css/
-│   │   ├── js/
-│   │   └── index.html
-│   └── Dockerfile
-├── storage/
-│   └── init/
-├── infra/
-│   └── render.yaml
-├── scripts/
-├── docker-compose.yml
-└── .env.example
-```
-
-## Quick Start (Docker)
-
-1. Copy env file:
+Docker with Compose is required. On first setup, create the local configuration:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-2. Run services:
+Do not overwrite an existing `.env`. Set a unique `POSTGRES_PASSWORD` and a long,
+random `ETL_API_TOKEN` in it. An empty token disables collection over HTTP but
+does not prevent browsing existing vacancies. Never commit `.env` or put the
+token in frontend files.
 
-Set a unique `POSTGRES_PASSWORD` in `.env`, then generate a private ingestion token:
+Start the services from the repository root:
 
 ```powershell
-py scripts/init_etl_token.py
+docker compose --env-file .env up -d --build
 ```
-
-```powershell
-docker compose --env-file .env up --build
-```
-
-3. Open:
 
 - Dashboard: `http://localhost:8080`
 - API health: `http://localhost:5000/api/v1/health`
 
-4. Trigger ETL for 5000 cleaned rows:
+Click **Update dataset** and enter the token from `.env` to collect up to 5,000
+cleaned vacancies per run. Collection can take several minutes. The browser
+does not persist the token. Repeated runs update existing records rather than
+duplicating source IDs; the total stored dataset can exceed the per-run target.
+
+View logs or stop services:
 
 ```powershell
-./scripts/run_etl.ps1 -TargetRows 5000
+docker compose logs -f backend
+docker compose down
 ```
 
-or from the dashboard button `Run ETL (5000)`. Both ask for `ETL_API_TOKEN`
-from your local `.env`; the dashboard does not persist it. Without a configured
-token, HTTP ingestion is disabled. Never put the token in frontend config or Git.
+PostgreSQL data is stored in the `pgdata` Docker volume. Rebuilding containers or
+running `docker compose down` preserves it; `docker compose down -v` deletes it.
+Changing `.env` credentials does not change users in an existing database volume.
 
-## pgAdmin Connection (Docker Postgres)
+## Dashboard
 
-Use these settings in pgAdmin when running via Docker Compose:
+The Overview tab shows vacancy, company, title and location counts, demand by
+role, skills, leading employers, a city word cloud and salary statistics. The
+Vacancies tab supports search and pagination, with seven rows on shorter windows
+and eight on taller windows. Role, skill, employer and city selections open matching
+vacancies. Global filters select the role family and source.
 
-- Host: `localhost`
-- Port: `5433` (host mapped port, configurable via `POSTGRES_HOST_PORT`)
-- Database: `jobsdb`
-- User: from `.env` `POSTGRES_USER`
-- Password: from `.env` `POSTGRES_PASSWORD`
+The interface is English; original vacancy titles, cities and employer names are
+preserved. This is a desktop dashboard without a mobile-specific layout.
 
-If you also run a local PostgreSQL service on `5432`, keep Docker on `5433` to avoid connecting to the wrong database.
+The browser calls `/api/v1` on the same origin; Nginx forwards requests to Flask.
+D3 and fonts are served locally, so browsing stored data does not require internet
+access. Collecting new vacancies does. Third-party asset licenses are included in
+`frontend/public/THIRD_PARTY_LICENSES.txt`.
 
-## API Endpoints
+## Collection And Cleaning
 
-- `GET /api/v1/health`
-- `POST /api/v1/etl/run`
-- `GET /api/v1/jobs?page=1&page_size=25&role_family=it&source=hh`
-- `GET /api/v1/metrics/overview`
-- `GET /api/v1/metrics/skills?limit=12`
-- `GET /api/v1/metrics/salary-bands`
-- `GET /api/v1/metrics/locations?limit=16`
-- `GET /api/v1/metrics/timeline`
+Sources are HeadHunter (API with an HTML fallback) and Arbeitnow. Availability,
+rate limits and the number of relevant results can prevent a run from reaching
+its target. The response reports source counts, inserted and updated rows, and
+notes about incomplete collection.
 
-`POST /api/v1/etl/run` requires `Authorization: Bearer <ETL_API_TOKEN>` and
-an integer `target_rows` between 1 and 10000. Only one ingestion can run at a
-time across backend workers. Read-only analytics remain public.
+The ETL pipeline normalizes text, labels Data Science and IT role families,
+extracts skills, converts supported salary currencies using a dated rate snapshot and
+deduplicates source IDs before PostgreSQL upserts. Role labels and chart categories
+are defined in `backend/app/etl/roles.py`; they do not exclude vacancies by title
+or skills and do not establish whether a vacancy is still open.
 
-Local Compose ports bind to `127.0.0.1`: PostgreSQL `5433`, API `5000`,
-dashboard `8080`. Run `docker compose up -d --build` to apply changed bindings
-to existing containers. This preserves the PostgreSQL volume.
+Availability is separate from role classification. HH API records explicitly
+marked `archived` are skipped during collection. Collection does not automatically
+recheck all stored vacancies. A separate availability audit checks existing source
+pages; only confirmed closed records are removed after a backup. Blocked requests,
+timeouts and ambiguous responses remain unverified, not closed. Audit reports and
+backups are local, ignored data artifacts under `backend/data/`, not app services.
 
-## Local Backend (without Docker)
+Salary statistics only cover vacancies with disclosed, convertible amounts.
+The fixed rates are from the [Bank of Russia XML snapshot for 2026-11-07](https://www.cbr.ru/scripts/XML_daily.asp?date_req=07/11/2026).
+The conversion is `amount * (RUB per currency unit) / (RUB per USD)`, accounting
+for quoted nominals (100 KZT and 10 UAH). The snapshot date and salary coverage
+are shown in the dashboard. These are not live or publication-date rates, and
+differing pay periods still limit comparability. HH's legacy BYR label is
+normalized to BYN at the source; other unsupported currency codes are not converted.
 
-1. Start PostgreSQL (locally or container)
-2. Create and activate venv
-3. Install dependencies:
+`TARGET_CLEANED_ROWS`, `MAX_SOURCE_PAGES` and `REQUEST_TIMEOUT_SECONDS` configure
+collection. The dashboard requests 5,000 rows; direct API calls can request an
+integer `target_rows` from 1 to 10,000. Only one collection run can write at a time.
+
+## PostgreSQL And pgAdmin
+
+For pgAdmin running on the host, register a connection with:
+
+- Host: `127.0.0.1`
+- Port: `5433`, or `POSTGRES_HOST_PORT` from `.env`
+- Database: `POSTGRES_DB` from `.env`, default `jobsdb`
+- User: `POSTGRES_USER` from `.env`, default `jobs`
+- Password: `POSTGRES_PASSWORD` from `.env`
+
+Docker services use `storage:5432` internally. A separate PostgreSQL installation
+on host port `5432` is not the Docker database. Core tables (`jobs`, `skills`,
+`job_skills`) are created by SQLAlchemy when the backend starts.
+
+## API
+
+The default prefix is `/api/v1`:
+
+- `GET /health`
+- `GET /jobs`
+- `GET /metrics/overview`
+- `GET /metrics/roles`
+- `GET /metrics/skills`
+- `GET /metrics/employers`
+- `GET /metrics/locations`
+- `GET /metrics/salary-bands`
+- `POST /etl/run`
+
+Metrics accept `role_family` and `source`. Jobs additionally accept `page`,
+`page_size`, `search`, `skill`, `company`, `location`, `country` and `category`.
+Collection requires `Authorization: Bearer <ETL_API_TOKEN>`
+and a JSON object such as `{"target_rows": 5000}`.
+
+## Local Backend Without Docker
+
+Start PostgreSQL and configure `.env` for its host and port. For the Docker
+database accessed from the host, use `POSTGRES_HOST=127.0.0.1` and
+`POSTGRES_PORT=5433`. Then run with Python 3.12 or newer:
 
 ```powershell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-4. Run Flask:
-
-```powershell
 python run.py
 ```
 
-## Deploy (Render)
-
-`infra/render.yaml` is included for blueprint deployment (backend + frontend + postgres).
-
-1. Push this repository to GitHub.
-2. In Render, create a new Blueprint and point it to the repo.
-3. Use `infra/render.yaml`.
-4. After deploy, update `frontend/public/js/config.js` deployed backend URL if your service names differ from the defaults.
-
-## Notes About 5000 Rows
-
-- The ETL target is controlled by `TARGET_CLEANED_ROWS` and `/etl/run` `target_rows`.
-- Real row count depends on source API availability/rate limits and keyword coverage.
-- Upserts are idempotent, so repeated runs enrich/update instead of duplicating rows.
-- ETL response includes `source_rows` and `notes` so you can quickly see if one source under-delivered.
-- Some environments may receive `403/400` from `hh.ru`; in that case, global ingestion from Arbeitnow still works and is visible in `source_rows`.
-
-## Testing
-
-```powershell
-cd backend
-pytest
-```
-
-Security regression tests cover ingestion authentication, input limits, CORS,
-error redaction, concurrency protection, and malicious source URLs. Frontend
-XSS regression tests use Node's built-in runner:
-
-```powershell
-node --test frontend/tests/security.test.cjs
-py scripts/check_secrets.py
-```
-
-See `SECURITY.md` for security settings, audit scope, and remaining operational steps.
+The development entry point runs without debug mode. Docker runs Gunicorn.
+Published Compose ports bind to `127.0.0.1`; this configuration is for local use,
+not a public deployment. Keep ETL authorization, input validation and security
+headers enabled when adapting it for hosting.
